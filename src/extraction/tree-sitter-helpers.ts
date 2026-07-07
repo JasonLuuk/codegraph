@@ -106,6 +106,29 @@ export function getPrecedingDocstring(node: SyntaxNode, source: string): string 
   let sibling = anchor.previousNamedSibling;
   const comments: string[] = [];
 
+  // Cangjie: a comment preceding an interface's FIRST member is hoisted OUT
+  // of the interfaceBody by the grammar, landing as the interfaceDefinition's
+  // child right before the body — unreachable as the member's sibling. When
+  // the first member has no previous sibling, collect the definition-level
+  // trailing comments instead. (Nested interfaceBody wrappers occur, so climb
+  // through them.)
+  if (!sibling) {
+    let wrapper = anchor.parent;
+    while (wrapper && wrapper.type === 'interfaceBody' && !wrapper.previousNamedSibling && wrapper.parent?.type === 'interfaceBody') {
+      wrapper = wrapper.parent;
+    }
+    if (wrapper && wrapper.type === 'interfaceBody') {
+      let defSibling = wrapper.previousNamedSibling;
+      while (defSibling && (defSibling.type === 'blockComment' || defSibling.type === 'lineComment')) {
+        comments.unshift(getNodeText(defSibling, source));
+        defSibling = defSibling.previousNamedSibling;
+      }
+      if (comments.length > 0) {
+        return comments.map(cleanCommentMarkers).join('\n').trim();
+      }
+    }
+  }
+
   while (sibling) {
     if (
       sibling.type === 'comment' ||

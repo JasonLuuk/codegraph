@@ -11206,3 +11206,38 @@ class Store {
     expect(refs).not.toContain('Int64'); // builtins skipped
   });
 });
+
+describe('Cangjie interface docstrings', () => {
+  it('should reach a first member doc comment the grammar hoists out of the body', () => {
+    const code = `package t
+
+interface I {
+    /** First doc. */
+    func first(): Unit
+    /** Second doc. */
+    func second(): Unit
+}
+`;
+    const result = extractFromSource('i.cj', code);
+    expect(result.nodes.find((n) => n.name === 'first')?.docstring).toBe('First doc.');
+    expect(result.nodes.find((n) => n.name === 'second')?.docstring).toBe('Second doc.');
+  });
+
+  it('should not let a blanked abstract prop leak its doc onto the next member', () => {
+    const code = `package t
+
+interface Config {
+    /** Max attempts. */
+    prop maxAttempts: Int64
+    /**
+     * Multi-line prop doc.
+     */
+    prop lockout: Float64
+    /** Reloads from disk. */
+    func reload(): Unit
+}
+`;
+    const result = extractFromSource('c.cj', code);
+    expect(result.nodes.find((n) => n.name === 'reload')?.docstring).toBe('Reloads from disk.');
+  });
+});

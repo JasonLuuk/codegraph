@@ -255,6 +255,27 @@ export const cangjieExtractor: LanguageExtractor = {
       const prop = line.match(/^(\s*)((?:(?:public|private|protected|internal|static|mut|open|override)\s+)*prop\s+[A-Za-z_]\w*\s*:[^{]*)$/);
       if (prop) {
         lines[i] = prop[1] + ' '.repeat(prop[2]!.length);
+        // Blank the prop's own doc comment too — with the declaration gone,
+        // an adjacent comment would otherwise attach to the NEXT member.
+        for (let j = i - 1; j >= 0; j--) {
+          const above = lines[j]!;
+          if (/^\s*\/\//.test(above) || /^\s*\/\*.*\*\/\s*$/.test(above)) {
+            lines[j] = ' '.repeat(above.length);
+            continue;
+          }
+          if (/\*\/\s*$/.test(above)) {
+            // multi-line block comment: blank up to its /* opener
+            let k = j;
+            while (k >= 0 && !/\/\*/.test(lines[k]!)) {
+              lines[k] = ' '.repeat(lines[k]!.length);
+              k--;
+            }
+            if (k >= 0) lines[k] = ' '.repeat(lines[k]!.length);
+            j = k;
+            continue;
+          }
+          break;
+        }
         changed = true;
       }
       offset += line.length + 1;

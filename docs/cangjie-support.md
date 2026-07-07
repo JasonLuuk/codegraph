@@ -4,6 +4,9 @@
 `codegraph init` 会产出仓颉的 function/method/property/field/class/interface/struct/enum 节点
 （含 `extend` 扩展块——成员按 Swift extension 先例挂到被扩展类型名下，`Widget::extended`），
 宏注解（`@Entry`/`@Component`/`@State`/`@Builder`…）记录在节点 decorators 上可搜索，
+枚举 case 抽为 enum_member 节点（`Rule.ValidateRegex(...)` 构造调用可解析到 case），
+`/** */` 与 `//` 文档注释进 docstring（含穿过注解块、紧跟 package 头两种位置），
+`public` 符号标记 isExported，
 以及 `calls`（调用，含无括号尾随 lambda 的 ArkUI DSL 写法）、`extends`/`implements`
 （`<:` 超类型列表）、`instantiates`（构造）、`contains`、`imports` 边，写入
 `.codegraph/codegraph.db`。另含 **ArkUI 状态→build() 重渲染合成边**：`@Component` 类中对 `@State`/`@Link` 等响应式字段**赋值**的方法，

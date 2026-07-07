@@ -11083,3 +11083,53 @@ class Store {
     expect(localCall?.fromNodeId).toBe(result.nodes.find((n) => n.name === 'load')?.id);
   });
 });
+
+describe('Cangjie docstrings, enum members, and export flags', () => {
+  it('should capture docstrings, including through annotations and after the package header', () => {
+    const code = `package demo
+
+/** The main page. */
+@Entry
+@Component
+public class MainPage {
+    /** Bumps the counter. */
+    func increment(): Unit {}
+
+    // Plain line doc.
+    func other(): Unit {}
+}
+`;
+    const result = extractFromSource('page.cj', code);
+    expect(result.nodes.find((n) => n.name === 'MainPage')?.docstring).toBe('The main page.');
+    expect(result.nodes.find((n) => n.name === 'increment')?.docstring).toBe('Bumps the counter.');
+    expect(result.nodes.find((n) => n.name === 'other')?.docstring).toBe('Plain line doc.');
+  });
+
+  it('should extract enum cases as enum_member nodes', () => {
+    const code = `package demo
+
+enum Shape {
+    | Dot
+    | Cell(Int64)
+
+    func area(): Int64 { return 0 }
+}
+`;
+    const result = extractFromSource('shape.cj', code);
+    const members = result.nodes.filter((n) => n.kind === 'enum_member');
+    expect(members.map((n) => n.name).sort()).toEqual(['Cell', 'Dot']);
+    expect(members[0]?.qualifiedName).toContain('Shape::');
+    expect(result.nodes.find((n) => n.name === 'area')?.kind).toBe('method');
+  });
+
+  it('should flag public symbols as exported', () => {
+    const code = `package demo
+
+public func api(): Unit {}
+func internalHelper(): Unit {}
+`;
+    const result = extractFromSource('api.cj', code);
+    expect(result.nodes.find((n) => n.name === 'api')?.isExported).toBe(true);
+    expect(result.nodes.find((n) => n.name === 'internalHelper')?.isExported).toBe(false);
+  });
+});

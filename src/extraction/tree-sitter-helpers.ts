@@ -111,10 +111,31 @@ export function getPrecedingDocstring(node: SyntaxNode, source: string): string 
       sibling.type === 'comment' ||
       sibling.type === 'line_comment' ||
       sibling.type === 'block_comment' ||
-      sibling.type === 'documentation_comment'
+      sibling.type === 'documentation_comment' ||
+      // Cangjie spells them camelCase
+      sibling.type === 'lineComment' ||
+      sibling.type === 'blockComment'
     ) {
       comments.unshift(getNodeText(sibling, source));
       sibling = sibling.previousNamedSibling;
+    } else if (sibling.type === 'macroExpression') {
+      // Cangjie macro annotations (`@Component`, `@State`, ...) sit BETWEEN
+      // the doc comment and the declaration as siblings (they are not
+      // children the wrapper climb above could handle) — skip them without
+      // collecting so the comment above the annotation block is reached.
+      sibling = sibling.previousNamedSibling;
+    } else if (sibling.type === 'packageDeclaration') {
+      // Cangjie: a comment directly following `package x` is absorbed as the
+      // packageDeclaration's TRAILING children — it documents the first
+      // declaration after the package header (only reachable when everything
+      // in between was annotations/comments), so surface it here.
+      const kids = sibling.namedChildren;
+      for (let i = kids.length - 1; i >= 0; i--) {
+        const kid = kids[i];
+        if (!kid || (kid.type !== 'blockComment' && kid.type !== 'lineComment')) break;
+        comments.unshift(getNodeText(kid, source));
+      }
+      break;
     } else {
       break;
     }

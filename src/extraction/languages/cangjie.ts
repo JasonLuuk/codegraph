@@ -227,6 +227,13 @@ export const cangjieExtractor: LanguageExtractor = {
       }
       return true;
     }
+    // Enum cases are bare `identifier` children of enumBody (`| Cell(Int64)`
+    // puts the payload TYPES as separate siblings, so the identifier IS the
+    // case name) — parent-gated so no other identifier ever matches.
+    if (node.type === 'identifier' && node.parent?.type === 'enumBody') {
+      ctx.createNode('enum_member', getNodeText(node, ctx.source), node);
+      return true;
+    }
     // Class-body `let`/`var` declarations are FIELDS (`@State var count = 0`
     // reactive state included — its annotations land on the field node via
     // extractModifiers). Gated on the enclosing scope being class-like so
@@ -276,6 +283,12 @@ export const cangjieExtractor: LanguageExtractor = {
   isStatic: (node) => {
     const modifiers = directChild(node, 'modifiers');
     return modifiers ? /\bstatic\b/.test(modifiers.text) : false;
+  },
+
+  // Cangjie has no export statement — `public` IS the cross-package export.
+  isExported: (node) => {
+    const modifiers = directChild(node, 'modifiers');
+    return modifiers ? /\bpublic\b/.test(modifiers.text) : false;
   },
 
   // `import pkg.sub.Item` / `import pkg.{A, B}` / `import pkg.* ` — record the

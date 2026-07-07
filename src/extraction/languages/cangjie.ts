@@ -198,6 +198,24 @@ const BODY_CHILD_TYPES = [
 
 const CLASS_LIKE_KINDS = new Set(['class', 'struct', 'interface', 'enum']);
 
+/**
+ * Bare name of a declaration's declared USER type (`let repo: Repository` /
+ * `prop kind: FilterKind` → the userType's identifier; generics use the head:
+ * `Array<FilterUISection>` → Array). Builtin scalar types (Int64, String, …)
+ * are keyword-typed nodes, not userType, and return undefined — matching how
+ * other languages skip primitive type refs.
+ */
+function fieldTypeName(node: SyntaxNode): string | undefined {
+  // `?Config` wraps the userType in a prefixType node.
+  const typeNode = directChildOf(node, ['userType', 'prefixType']);
+  if (!typeNode) return undefined;
+  const inner = typeNode.type === 'prefixType'
+    ? directChild(typeNode, 'userType') ?? typeNode
+    : typeNode;
+  const id = directChild(inner, 'identifier');
+  return id ? id.text : undefined;
+}
+
 export const cangjieExtractor: LanguageExtractor = {
   // Two constructs the vendored grammar cannot parse (each ERROR can swallow
   // the surrounding class/file — 58 of EUDI's 158 files carried errors, 72 of
@@ -315,6 +333,16 @@ export const cangjieExtractor: LanguageExtractor = {
       if (!nameNode) return false;
       const prop = ctx.createNode('property', getNodeText(nameNode, ctx.source), node);
       if (prop) {
+        const declaredType = fieldTypeName(node);
+        if (declaredType) {
+          ctx.addUnresolvedReference({
+            fromNodeId: prop.id,
+            referenceName: declaredType,
+            referenceKind: 'references',
+            line: node.startPosition.row + 1,
+            column: node.startPosition.column,
+          });
+        }
         // visitFunctionBody attributes calls to the top of the scope stack, not
         // to its functionId argument — push the property before walking.
         ctx.pushScope(prop.id);
@@ -336,7 +364,9 @@ export const cangjieExtractor: LanguageExtractor = {
     }
     // Class-body `let`/`var` declarations are FIELDS (`@State var count = 0`
     // reactive state included — its annotations land on the field node via
-    // extractModifiers). Gated on the enclosing scope being class-like so
+    // extractModifiers). A named user type in the declaration
+    // (`let repo: Repository`) emits a `references` edge so "who uses this
+    // type" includes fields. Gated on the enclosing scope being class-like so
     // function-local and top-level declarations stay unextracted.
     if (node.type === 'variableDeclaration') {
       const parentId = ctx.nodeStack[ctx.nodeStack.length - 1];
@@ -346,6 +376,18 @@ export const cangjieExtractor: LanguageExtractor = {
         .filter((c) => c?.type === 'variableName')
         .map((c) => ctx.createNode('field', getNodeText(c!, ctx.source), node))
         .filter((f) => f !== null);
+      const declaredType = fieldTypeName(node);
+      if (declaredType) {
+        for (const f of fields) {
+          ctx.addUnresolvedReference({
+            fromNodeId: f!.id,
+            referenceName: declaredType,
+            referenceKind: 'references',
+            line: node.startPosition.row + 1,
+            column: node.startPosition.column,
+          });
+        }
+      }
       // The initializer may call (`var vm = makeDefault()`): walk it for call
       // edges, attributed to the field when the declaration has exactly one.
       const scopeId = fields.length === 1 ? fields[0]!.id : undefined;

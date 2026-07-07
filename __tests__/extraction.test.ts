@@ -11181,3 +11181,28 @@ class After {
     expect(result.nodes.find((n) => n.name === 'After')?.kind).toBe('class');
   });
 });
+
+describe('Cangjie field type references', () => {
+  it('should emit references from fields and props to their declared user types', () => {
+    const code = `package demo
+
+class Store {
+    let repo: Repository = LocalRepository()
+    var maybe: ?Config = Option<Config>.None
+    var count: Int64 = 0
+
+    prop kind: FilterKind {
+        get() { FilterKind.All }
+    }
+}
+`;
+    const result = extractFromSource('store.cj', code);
+    const refs = result.unresolvedReferences
+      .filter((r) => r.referenceKind === 'references')
+      .map((r) => r.referenceName);
+    expect(refs).toContain('Repository');
+    expect(refs).toContain('Config'); // option type unwraps
+    expect(refs).toContain('FilterKind'); // prop type
+    expect(refs).not.toContain('Int64'); // builtins skipped
+  });
+});

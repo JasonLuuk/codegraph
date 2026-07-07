@@ -11025,3 +11025,61 @@ extend C <: Feature3 {}
     expect(refs).toContain('implements:Feature3');   // extend-block conformance
   });
 });
+
+describe('Cangjie annotations and fields', () => {
+  it('should capture macro annotations onto node decorators', () => {
+    const code = `
+package demo
+
+@Entry
+@Component
+public class MainPage {
+    @State
+    var count: Int64 = 0
+
+    @Builder
+    func header(): Unit {}
+
+    func build(): Unit {}
+}
+
+@Builder
+func globalSlot(): Unit {}
+`;
+    const result = extractFromSource('page.cj', code);
+    const cls = result.nodes.find((n) => n.name === 'MainPage');
+    expect(cls?.decorators).toEqual(['Entry', 'Component']);
+    const count = result.nodes.find((n) => n.name === 'count');
+    expect(count?.kind).toBe('field');
+    expect(count?.decorators).toEqual(['State']);
+    expect(result.nodes.find((n) => n.name === 'header')?.decorators).toEqual(['Builder']);
+    expect(result.nodes.find((n) => n.name === 'globalSlot')?.decorators).toEqual(['Builder']);
+    expect(result.nodes.find((n) => n.name === 'build')?.decorators).toBeUndefined();
+  });
+
+  it('should extract class-body variables as fields but skip locals, and keep initializer calls', () => {
+    const code = `
+package demo
+
+class Store {
+    let repo: Repo = makeRepo()
+
+    func load(): Unit {
+        let local = fetch()
+    }
+}
+`;
+    const result = extractFromSource('store.cj', code);
+    const repo = result.nodes.find((n) => n.name === 'repo');
+    expect(repo?.kind).toBe('field');
+    expect(result.nodes.find((n) => n.name === 'local')).toBeUndefined();
+    const initCall = result.unresolvedReferences.find(
+      (r) => r.referenceKind === 'calls' && r.referenceName === 'makeRepo'
+    );
+    expect(initCall?.fromNodeId).toBe(repo?.id);
+    const localCall = result.unresolvedReferences.find(
+      (r) => r.referenceKind === 'calls' && r.referenceName === 'fetch'
+    );
+    expect(localCall?.fromNodeId).toBe(result.nodes.find((n) => n.name === 'load')?.id);
+  });
+});

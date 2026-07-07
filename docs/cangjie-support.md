@@ -1,12 +1,20 @@
 # 仓颉 (Cangjie) 语言支持说明
 
 本分支（`cangjie-support`）为 codegraph 增加了华为 HarmonyOS 应用语言仓颉（`.cj`）的索引支持：
-`codegraph init` 会产出仓颉的 function/method/property/class/interface/struct/enum 节点
+`codegraph init` 会产出仓颉的 function/method/property/field/class/interface/struct/enum 节点
 （含 `extend` 扩展块——成员按 Swift extension 先例挂到被扩展类型名下，`Widget::extended`），
+宏注解（`@Entry`/`@Component`/`@State`/`@Builder`…）记录在节点 decorators 上可搜索，
 以及 `calls`（调用，含无括号尾随 lambda 的 ArkUI DSL 写法）、`extends`/`implements`
 （`<:` 超类型列表）、`instantiates`（构造）、`contains`、`imports` 边，写入
-`.codegraph/codegraph.db`。原有全部语言不受影响（完整测试套件全部通过，仅上游自带的
-一个 mcp-daemon 时序 flaky 测试偶发，未改动的上游 main 同样复现）。
+`.codegraph/codegraph.db`。另含 **ArkUI 状态→build() 重渲染合成边**：`@Component` 类中对 `@State`/`@Link` 等响应式字段**赋值**的方法，
+获得一条指向该类 `build()` 的 heuristic calls 边——只读方法、非响应式字段赋值、无组件
+注解的类都不连（赋值门控 = 精度线）。原有全部语言不受影响（完整测试套件全部通过，仅
+上游自带的一个 mcp-daemon 时序 flaky 测试偶发，未改动的上游 main 同样复现）。
+
+已测量并**有意不做**的两座桥：`@ohos.events.emitter` 事件桥——验收工程
+0 处使用；字符串 URL 路由桥（`router.pushUrl`）——仓颉工程用对象式 `router.push(AppRoutes.X)`
++ 顶层 `@Builder pageMap` 分发器，后者静态实例化全部页面组件，流程图已经连通，专门的
+常量键匹配桥只增加「调用点→具体页面」的精度，暂缓到有实际需求再做。
 
 ## 改动的文件
 

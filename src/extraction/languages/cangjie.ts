@@ -94,6 +94,35 @@ export function cangjieCalleeName(expr: SyntaxNode | null, source: string): stri
   return undefined;
 }
 
+/**
+ * Macro annotations (`@Entry`, `@Component`, `@State`, `@Builder`, …) parse as
+ * `macroExpression` nodes PRECEDING the declaration as siblings — one node per
+ * annotation, each carrying a `macroName` child. Walk backwards from the
+ * declaration collecting them; stop at the first non-annotation sibling so an
+ * earlier declaration's annotations never leak in.
+ */
+function collectMacroAnnotations(node: SyntaxNode): string[] | undefined {
+  const parent = node.parent;
+  if (!parent) return undefined;
+  const siblings = parent.namedChildren;
+  const start = node.startIndex;
+  let idx = -1;
+  for (let i = 0; i < siblings.length; i++) {
+    if (siblings[i] && siblings[i]!.startIndex === start) {
+      idx = i;
+      break;
+    }
+  }
+  const names: string[] = [];
+  for (let i = idx - 1; i >= 0; i--) {
+    const sib = siblings[i];
+    if (!sib || sib.type !== 'macroExpression') break;
+    const name = directChild(sib, 'macroName');
+    if (name) names.unshift(name.text);
+  }
+  return names.length > 0 ? names : undefined;
+}
+
 const NAME_CHILD_TYPES: Record<string, string> = {
   functionDefinition: 'funcName',
   classDefinition: 'className',
@@ -111,6 +140,8 @@ const BODY_CHILD_TYPES = [
   'enumBody',
   'extendBody',
 ] as const;
+
+const CLASS_LIKE_KINDS = new Set(['class', 'struct', 'interface', 'enum']);
 
 export const cangjieExtractor: LanguageExtractor = {
   // `func` at top level is a function; the same node inside a class/struct/
@@ -171,25 +202,52 @@ export const cangjieExtractor: LanguageExtractor = {
 
   resolveBody: (node) => directChildOf(node, BODY_CHILD_TYPES),
 
-  // `prop name: T { get() {...} set(v) {...} }` — create the property node and
-  // walk BOTH accessor blocks as its body so getter/setter calls become edges.
+  // Surface macro annotations on every node's `decorators` list — searchable
+  // (`@Entry` pages, `@Builder` slots), and what the ArkUI-in-Cangjie
+  // state→build() synthesizer keys off (`@State` fields).
+  extractModifiers: (node) => collectMacroAnnotations(node),
+
   visitNode: (node, ctx) => {
-    if (node.type !== 'propertyDefinition') return false;
-    const nameNode = directChild(node, 'propertyName');
-    if (!nameNode) return false;
-    const prop = ctx.createNode('property', getNodeText(nameNode, ctx.source), node);
-    if (prop) {
-      // visitFunctionBody attributes calls to the top of the scope stack, not
-      // to its functionId argument — push the property before walking.
-      ctx.pushScope(prop.id);
-      for (const child of node.namedChildren) {
-        if (child && child.type === 'block') {
-          ctx.visitFunctionBody(child, prop.id);
+    // `prop name: T { get() {...} set(v) {...} }` — create the property node and
+    // walk BOTH accessor blocks as its body so getter/setter calls become edges.
+    if (node.type === 'propertyDefinition') {
+      const nameNode = directChild(node, 'propertyName');
+      if (!nameNode) return false;
+      const prop = ctx.createNode('property', getNodeText(nameNode, ctx.source), node);
+      if (prop) {
+        // visitFunctionBody attributes calls to the top of the scope stack, not
+        // to its functionId argument — push the property before walking.
+        ctx.pushScope(prop.id);
+        for (const child of node.namedChildren) {
+          if (child && child.type === 'block') {
+            ctx.visitFunctionBody(child, prop.id);
+          }
         }
+        ctx.popScope();
       }
-      ctx.popScope();
+      return true;
     }
-    return true;
+    // Class-body `let`/`var` declarations are FIELDS (`@State var count = 0`
+    // reactive state included — its annotations land on the field node via
+    // extractModifiers). Gated on the enclosing scope being class-like so
+    // function-local and top-level declarations stay unextracted.
+    if (node.type === 'variableDeclaration') {
+      const parentId = ctx.nodeStack[ctx.nodeStack.length - 1];
+      const parent = parentId ? ctx.nodes.find((n) => n.id === parentId) : undefined;
+      if (!parent || !CLASS_LIKE_KINDS.has(parent.kind)) return false;
+      const fields = node.namedChildren
+        .filter((c) => c?.type === 'variableName')
+        .map((c) => ctx.createNode('field', getNodeText(c!, ctx.source), node))
+        .filter((f) => f !== null);
+      // The initializer may call (`var vm = makeDefault()`): walk it for call
+      // edges, attributed to the field when the declaration has exactly one.
+      const scopeId = fields.length === 1 ? fields[0]!.id : undefined;
+      if (scopeId) ctx.pushScope(scopeId);
+      ctx.visitFunctionBody(node, scopeId ?? '');
+      if (scopeId) ctx.popScope();
+      return true;
+    }
+    return false;
   },
 
   getSignature: (node, source) => {

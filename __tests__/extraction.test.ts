@@ -11133,3 +11133,51 @@ func internalHelper(): Unit {}
     expect(result.nodes.find((n) => n.name === 'internalHelper')?.isExported).toBe(false);
   });
 });
+
+describe('Cangjie grammar-gap pre-parse', () => {
+  it('should survive line-leading attribute chains and keep handler-lambda calls', () => {
+    const code = `package demo
+
+@Component
+class Toolbar {
+    func handleBack(): Unit {}
+
+    func build(): Unit {
+        Text("back")
+            .fontSize(16.0)
+            .padding(top: 8.0, bottom: 8.0)
+            .onClick({ _ => this.handleBack() })
+    }
+
+    func after(): Unit { stillHere() }
+}
+`;
+    const result = extractFromSource('toolbar.cj', code);
+    // The leading-dot chain must not corrupt the class: members after it survive.
+    expect(result.nodes.find((n) => n.name === 'after')?.kind).toBe('method');
+    const calls = result.unresolvedReferences.filter((r) => r.referenceKind === 'calls');
+    const handlerCall = calls.find((r) => r.referenceName === 'handleBack');
+    expect(handlerCall).toBeDefined();
+    expect(handlerCall?.fromNodeId).toBe(result.nodes.find((n) => n.name === 'build')?.id);
+    expect(calls.some((r) => r.referenceName === 'stillHere')).toBe(true);
+  });
+
+  it('should survive bodiless interface props', () => {
+    const code = `package demo
+
+interface Config {
+    prop maxAttempts: Int64
+    prop lockoutSeconds: Float64
+    func reload(): Unit
+}
+
+class After {
+    func ok(): Unit {}
+}
+`;
+    const result = extractFromSource('config.cj', code);
+    expect(result.nodes.find((n) => n.name === 'Config')?.kind).toBe('interface');
+    expect(result.nodes.find((n) => n.name === 'reload')?.kind).toBe('method');
+    expect(result.nodes.find((n) => n.name === 'After')?.kind).toBe('class');
+  });
+});

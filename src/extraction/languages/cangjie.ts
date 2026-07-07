@@ -144,6 +144,46 @@ const BODY_CHILD_TYPES = [
 const CLASS_LIKE_KINDS = new Set(['class', 'struct', 'interface', 'enum']);
 
 export const cangjieExtractor: LanguageExtractor = {
+  // Two constructs the vendored grammar cannot parse (each ERROR can swallow
+  // the surrounding class/file — 58 of EUDI's 158 files carried errors, 72 of
+  // them from the first shape). Blank them pre-parse, offset-preserving:
+  //
+  // 1. LINE-LEADING chained attributes — the dominant ArkUI style:
+  //        Text("‹")
+  //            .fontSize(16)
+  //            .onClick({ _ => this.handleBack() })
+  //    Blank only the leading DOT: `.padding(top: 8.0)` parses as the plain
+  //    call ` padding(top: 8.0)` — named/multi-line arguments and handler
+  //    lambdas (`this.handleBack()`) all extract normally, attributed to the
+  //    enclosing method. Framework attribute names resolve to nothing and
+  //    drop; a user-defined attribute helper resolves to its definition. (No
+  //    valid Cangjie parse contains a line-leading `.name` — the grammar has
+  //    no rule for it — so this only ever touches broken regions,
+  //    raw-string/comment CONTENT aside, which extraction ignores.)
+  // 2. Bodiless `prop name: Type` (an interface's abstract property) — the
+  //    grammar requires an accessor block. Blank the whole declaration; the
+  //    implementing classes carry the real accessors.
+  preParse: (source) => {
+    if (!source.includes('.') && !source.includes('prop')) return source;
+    const lines = source.split('\n');
+    let changed = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      const dot = line.match(/^(\s*)\.[A-Za-z_]/);
+      if (dot) {
+        lines[i] = dot[1] + ' ' + line.slice(dot[1]!.length + 1);
+        changed = true;
+        continue;
+      }
+      const prop = line.match(/^(\s*)((?:(?:public|private|protected|internal|static|mut|open|override)\s+)*prop\s+[A-Za-z_]\w*\s*:[^{]*)$/);
+      if (prop) {
+        lines[i] = prop[1] + ' '.repeat(prop[2]!.length);
+        changed = true;
+      }
+    }
+    return changed ? lines.join('\n') : source;
+  },
+
   // `func` at top level is a function; the same node inside a class/struct/
   // interface/enum body classifies as a method via methodTypes (the core's
   // isInsideClassLikeNode check). `main() { }` and constructors (`init`) /

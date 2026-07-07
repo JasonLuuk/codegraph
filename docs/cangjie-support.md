@@ -16,6 +16,12 @@
 注解的类都不连（赋值门控 = 精度线）。原有全部语言不受影响（完整测试套件全部通过，仅
 上游自带的一个 mcp-daemon 时序 flaky 测试偶发，未改动的上游 main 同样复现）。
 
+**sync 增量路径已验证**：改/增/删函数与文件、含链式属性的新文件（preParse、硬门控、
+注解、docstring 在增量路径全部生效）、EUDI 规模单文件 sync（<0.5s）均正确且无悬挂边。
+一个上游架构层面的共性行为（两种 HarmonyOS UI 语言对照实验行为一致）：`arkui-state` 等
+**合成桥只在全量索引时生成**——某文件被 sync 后其旧桥随旧节点清除，需要下次
+`codegraph index`/`init` 才重新合成（保守方向：宁缺不错，watch 场景桥会滞后）。
+
 已测量并**有意不做**的两座桥：`@ohos.events.emitter` 事件桥——验收工程
 0 处使用；字符串 URL 路由桥（`router.pushUrl`）——仓颉工程用对象式 `router.push(AppRoutes.X)`
 + 顶层 `@Builder pageMap` 分发器，后者静态实例化全部页面组件，流程图已经连通，专门的

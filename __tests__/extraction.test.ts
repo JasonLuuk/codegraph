@@ -11241,3 +11241,66 @@ interface Config {
     expect(result.nodes.find((n) => n.name === 'reload')?.docstring).toBe('Reloads from disk.');
   });
 });
+
+describe('Cangjie library-code grammar gaps (pre-parse)', () => {
+  it('should extract `operator override func` members (modifier order swap)', () => {
+    const code = `package demo
+
+public class HostAndPort {
+    public operator override func ==(o: HostAndPort): Bool {
+        return compareParts(o)
+    }
+    func after(): Unit {}
+}
+`;
+    const result = extractFromSource('hp.cj', code);
+    const op = result.nodes.find((n) => n.name === 'operator ==');
+    expect(op?.kind).toBe('method');
+    expect(op?.qualifiedName).toBe('HostAndPort::operator ==');
+    expect(result.nodes.find((n) => n.name === 'after')?.kind).toBe('method');
+    expect(
+      result.unresolvedReferences.some((r) => r.referenceKind === 'calls' && r.referenceName === 'compareParts')
+    ).toBe(true);
+  });
+
+  it('should extract `from module import ...` cross-module imports', () => {
+    const code = `package demo
+
+from redis_sdk import redis.client.api.*
+from std import time.Duration
+
+func f(): Unit {}
+`;
+    const result = extractFromSource('imp.cj', code);
+    const names = result.nodes.filter((n) => n.kind === 'import').map((n) => n.name);
+    expect(names).toContain('redis.client.api');
+    expect(names).toContain('time');
+    expect(result.nodes.find((n) => n.name === 'f')?.kind).toBe('function');
+  });
+
+  it('should keep implements edges through nested-generic supertypes', () => {
+    const code = `package demo
+
+public class ListBuilder <: ResponseBuilder<ArrayList<Any>> {
+    func build(): Unit {}
+}
+`;
+    const result = extractFromSource('lb.cj', code);
+    expect(result.nodes.find((n) => n.name === 'ListBuilder')?.kind).toBe('class');
+    const impl = result.unresolvedReferences.find((r) => r.referenceKind === 'implements' || r.referenceKind === 'extends');
+    expect(impl?.referenceName).toBe('ResponseBuilder');
+  });
+
+  it('should survive a bare-dollar string literal', () => {
+    const code = `package demo
+
+func marker(): String {
+    return "$"
+}
+func after(): Unit { work() }
+`;
+    const result = extractFromSource('d.cj', code);
+    expect(result.nodes.find((n) => n.name === 'marker')?.kind).toBe('function');
+    expect(result.nodes.find((n) => n.name === 'after')?.kind).toBe('function');
+  });
+});

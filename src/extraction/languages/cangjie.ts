@@ -199,6 +199,42 @@ const BODY_CHILD_TYPES = [
 const CLASS_LIKE_KINDS = new Set(['class', 'struct', 'interface', 'enum']);
 
 /**
+ * Blank every balanced `Name<...>` generic-argument group at or after `start`
+ * (the character after a `<:`). Same-length space replacement; a group whose
+ * `<` never balances on this line is left untouched.
+ */
+function blankSupertypeGenerics(line: string, start: number): string {
+  const chars = line.split('');
+  let i = start;
+  while (i < chars.length) {
+    if (/[A-Za-z_0-9]/.test(chars[i]!)) {
+      let j = i;
+      while (j < chars.length && /[\w]/.test(chars[j]!)) j++;
+      if (chars[j] === '<') {
+        let depth = 0;
+        let k = j;
+        for (; k < chars.length; k++) {
+          if (chars[k] === '<') depth++;
+          else if (chars[k] === '>') {
+            depth--;
+            if (depth === 0) break;
+          }
+        }
+        if (depth === 0) {
+          for (let b = j; b <= k; b++) chars[b] = ' ';
+          i = k + 1;
+          continue;
+        }
+      }
+      i = j + 1;
+      continue;
+    }
+    i++;
+  }
+  return chars.join('');
+}
+
+/**
  * Bare name of a declaration's declared USER type (`let repo: Repository` /
  * `prop kind: FilterKind` → the userType's identifier; generics use the head:
  * `Array<FilterUISection>` → Array). Builtin scalar types (Int64, String, …)
@@ -238,12 +274,45 @@ export const cangjieExtractor: LanguageExtractor = {
   //    implementing classes carry the real accessors.
   preParse: (source) => {
     blankedDotOffsets = new Set();
-    if (!source.includes('.') && !source.includes('prop')) return source;
     const lines = source.split('\n');
     let changed = false;
     let offset = 0;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
+      let line = lines[i]!;
+      // `public operator override func ==` — the grammar only accepts
+      // `override operator`; the two spellings are the same length, so swap
+      // in place.
+      if (line.includes('operator override')) {
+        line = lines[i] = line.replace(/operator override/g, 'override operator');
+        changed = true;
+      }
+      // `from module import pkg.path.*` — cross-module import syntax the
+      // grammar predates. Blank the `from module ` prefix; the remaining
+      // `import pkg.path.*` sits at its original byte offsets and parses
+      // (and extracts) as a normal import.
+      const fromImport = line.match(/^(\s*)(from\s+[\w.]+\s+)(?=import\b)/);
+      if (fromImport) {
+        line = lines[i] = fromImport[1] + ' '.repeat(fromImport[2]!.length) + line.slice(fromImport[1]!.length + fromImport[2]!.length);
+        changed = true;
+      }
+      // Supertype generic arguments — `<: ResponseBuilder<ArrayList<Any>>` —
+      // nest deeper than the grammar handles. Blank each supertype's balanced
+      // `<...>` group after the `<:`; the extends/implements edge uses the
+      // bare identifier either way.
+      const subIdx = line.indexOf('<:');
+      if (subIdx >= 0) {
+        const blanked = blankSupertypeGenerics(line, subIdx + 2);
+        if (blanked !== line) {
+          line = lines[i] = blanked;
+          changed = true;
+        }
+      }
+      // A string literal holding a bare dollar sign lexes as a broken
+      // interpolation. The content is irrelevant to extraction — blank it.
+      if (line.includes('"$"')) {
+        line = lines[i] = line.replace(/"\$"/g, '" "');
+        changed = true;
+      }
       const dot = line.match(/^(\s*)\.[A-Za-z_]/);
       if (dot) {
         blankedDotOffsets.add(offset + dot[1]!.length);

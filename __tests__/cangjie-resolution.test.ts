@@ -187,3 +187,48 @@ describe('Cangjie chained-attribute hard gate', () => {
     expect(targetIds).toContain(methods.find((n) => n.name === 'finish')!.id);
   });
 });
+
+describe('Cangjie bridge freshness on sync', () => {
+  let tmpDir: string | undefined;
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = undefined;
+  });
+
+  it('rebuilds the state→build bridge when a sync introduces the assignment', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-cangjie-sync-'));
+    const file = path.join(tmpDir, 'counter.cj');
+    fs.writeFileSync(
+      file,
+      'package demo\n\n@Component\npublic class Counter {\n' +
+        '    @State\n    var n: Int64 = 0\n' +
+        '    func readOnly(): Int64 { return this.n }\n' +
+        '    func build(): Unit { Text("v") }\n}\n'
+    );
+    const cg = CodeGraph.initSync(tmpDir);
+    await cg.indexAll();
+
+    const bridge = () =>
+      cg
+        .getNodesByKind('method')
+        .filter((n) => n.name === 'build')
+        .flatMap((b) => cg.getIncomingEdges(b.id))
+        .filter((e) => (e.metadata as Record<string, unknown>)?.synthesizedBy === 'arkui-state');
+    expect(bridge()).toHaveLength(0);
+
+    // Edit: readOnly now assigns the reactive field.
+    fs.writeFileSync(
+      file,
+      'package demo\n\n@Component\npublic class Counter {\n' +
+        '    @State\n    var n: Int64 = 0\n' +
+        '    func readOnly(): Int64 {\n        this.n = this.n + 1\n        return this.n\n    }\n' +
+        '    func build(): Unit { Text("v") }\n}\n'
+    );
+    await cg.sync();
+    expect(bridge()).toHaveLength(1);
+
+    // And a second sync stays idempotent.
+    await cg.sync();
+    expect(bridge()).toHaveLength(1);
+  });
+});

@@ -1095,6 +1095,24 @@ export class ReferenceResolver {
    * Processes unresolved references in chunks, persisting edges and cleaning
    * up resolved refs after each batch to avoid accumulating large arrays.
    */
+  /**
+   * Re-run dynamic-edge synthesis on demand. The batched full-resolution path
+   * runs synthesis at its tail, but sync's git fast path resolves via the
+   * SCOPED resolveAndPersist and skipped it — so a re-synced file's
+   * synthesized edges (state→build re-render bridges, callback dispatch, …)
+   * vanished with its old nodes and only returned on the next full index.
+   * Idempotent by construction: insertEdges is INSERT OR IGNORE against the
+   * edge-identity unique index, so re-synthesizing existing edges is a no-op.
+   * Best-effort like the in-line pass — never fails the caller.
+   */
+  async synthesizeDynamicEdges(): Promise<number> {
+    try {
+      return await synthesizeCallbackEdges(this.queries, this.context);
+    } catch {
+      return 0;
+    }
+  }
+
   async resolveAndPersistBatched(
     onProgress?: (current: number, total: number) => void,
     batchSize: number = 5000

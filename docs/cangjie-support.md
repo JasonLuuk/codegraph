@@ -7,7 +7,9 @@
 枚举 case 抽为 enum_member 节点（`Rule.ValidateRegex(...)` 构造调用可解析到 case），
 `/** */` 与 `//` 文档注释进 docstring（含穿过注解块、紧跟 package 头两种位置），
 `public` 符号标记 isExported，
-以及 `calls`（调用，含无括号尾随 lambda 的 ArkUI DSL 写法）、`extends`/`implements`
+以及 `calls`（调用，含无括号尾随 lambda 的 ArkUI DSL 写法；链式属性 `.fontSize(16)`
+走**硬门控**——只允许解析到 @Builder/@Extend/@Styles 装饰的属性助手，框架属性名
+绝不回落到裸名匹配误连同名符号，小写流式链 `list.map{}.filter{}` 不受影响）、`extends`/`implements`
 （`<:` 超类型列表）、`instantiates`（构造）、`contains`、`imports` 边，写入
 `.codegraph/codegraph.db`。另含 **ArkUI 状态→build() 重渲染合成边**：`@Component` 类中对 `@State`/`@Link` 等响应式字段**赋值**的方法，
 获得一条指向该类 `build()` 的 heuristic calls 边——只读方法、非响应式字段赋值、无组件

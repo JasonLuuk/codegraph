@@ -1749,6 +1749,9 @@ export function matchFuzzy(
 /** ArkUI attribute-helper decorators a `.attr(...)` chain may resolve to. */
 const ARKUI_ATTRIBUTE_DECORATORS = new Set(['Extend', 'Styles', 'AnimatableExtend', 'Builder']);
 
+/** Languages whose extractors emit dot-prefixed chained-UI-attribute refs. */
+const ARKUI_ATTRIBUTE_LANGS = new Set(['arkts', 'cangjie']);
+
 export function matchReference(
   ref: UnresolvedRef,
   context: ResolutionContext
@@ -1770,14 +1773,16 @@ export function matchReference(
   // same-named properties thousands of false callers. Ambiguity rule matches
   // the rest of the file: several same-named helpers → prefer the call-site
   // file, still ambiguous → drop the ref rather than guess.
-  if (ref.language === 'arkts' && ref.referenceName.startsWith('.')) {
+  if (ARKUI_ATTRIBUTE_LANGS.has(ref.language) && ref.referenceName.startsWith('.')) {
     const base = ref.referenceName.slice(1);
     const candidates = context
       .getNodesByName(base)
       .filter(
         (n) =>
-          n.language === 'arkts' &&
-          n.kind === 'function' &&
+          n.language === ref.language &&
+          // Cangjie @Builder attribute helpers may be class members; ArkTS
+          // keeps its original function-only contract.
+          (n.kind === 'function' || (ref.language === 'cangjie' && n.kind === 'method')) &&
           (n.decorators ?? []).some((d) => ARKUI_ATTRIBUTE_DECORATORS.has(d))
       );
     const chosen =

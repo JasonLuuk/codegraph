@@ -98,3 +98,92 @@ describe('Cangjie ArkUI state → build() bridge', () => {
     ).toHaveLength(0);
   });
 });
+
+describe('Cangjie chained-attribute hard gate', () => {
+  let tmpDir: string | undefined;
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = undefined;
+  });
+
+  it('links .titleStyle() to the @Builder helper but never .fontSize() to a decoy function', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-cangjie-gate-'));
+    fs.writeFileSync(
+      path.join(tmpDir, 'decoy.cj'),
+      'package demo\n' +
+        '\n' +
+        '// Decoys named after framework attributes.\n' +
+        'public func fontSize(v: Float64): Float64 { return v }\n' +
+        'public func width(v: Int64): Int64 { return v }\n'
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, 'helpers.cj'),
+      'package demo\n' +
+        '\n' +
+        '@Builder\n' +
+        'public func titleStyle(size: Int64): Unit {\n' +
+        '    Text("styled")\n' +
+        '}\n'
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, 'page.cj'),
+      'package demo\n' +
+        '\n' +
+        '@Component\n' +
+        'class Page {\n' +
+        '    func build(): Unit {\n' +
+        '        Text("t")\n' +
+        '            .fontSize(16.0)\n' +
+        '            .titleStyle(24)\n' +
+        '        Column { Text("c") }.width(100)\n' +
+        '    }\n' +
+        '}\n'
+    );
+
+    const cg = CodeGraph.initSync(tmpDir);
+    await cg.indexAll();
+
+    const fns = cg.getNodesByKind('function');
+    const titleStyle = fns.find((n) => n.name === 'titleStyle');
+    const build = cg.getNodesByKind('method').find((n) => n.name === 'build');
+    expect(titleStyle && build).toBeTruthy();
+
+    // The @Builder helper is the ONLY thing an attribute chain may reach.
+    expect(cg.getOutgoingEdges(build!.id).map((e) => e.target)).toContain(titleStyle!.id);
+    for (const decoyName of ['fontSize', 'width']) {
+      const decoy = fns.find((n) => n.name === decoyName);
+      expect(decoy).toBeDefined();
+      expect(cg.getIncomingEdges(decoy!.id).filter((e) => e.kind === 'calls')).toHaveLength(0);
+    }
+  });
+
+  it('keeps lowercase fluent chains resolving as ordinary method calls', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-cangjie-fluent-'));
+    fs.writeFileSync(
+      path.join(tmpDir, 'fluent.cj'),
+      'package demo\n' +
+        '\n' +
+        'class Builder {\n' +
+        '    func withX(): Builder { return this }\n' +
+        '    func finish(): Unit {}\n' +
+        '}\n' +
+        '\n' +
+        'func makeBuilder(): Builder { return Builder() }\n' +
+        '\n' +
+        'func user(): Unit {\n' +
+        '    makeBuilder().withX().finish()\n' +
+        '}\n'
+    );
+
+    const cg = CodeGraph.initSync(tmpDir);
+    await cg.indexAll();
+
+    const fns = cg.getNodesByKind('function');
+    const methods = cg.getNodesByKind('method');
+    const user = fns.find((n) => n.name === 'user');
+    const targetIds = cg.getOutgoingEdges(user!.id).map((e) => e.target);
+    expect(targetIds).toContain(fns.find((n) => n.name === 'makeBuilder')!.id);
+    expect(targetIds).toContain(methods.find((n) => n.name === 'withX')!.id);
+    expect(targetIds).toContain(methods.find((n) => n.name === 'finish')!.id);
+  });
+});

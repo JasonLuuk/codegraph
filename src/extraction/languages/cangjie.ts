@@ -28,6 +28,50 @@ function directChildOf(node: SyntaxNode, types: readonly string[]): SyntaxNode |
 }
 
 /**
+ * Byte offsets (in the PRE-PARSED source) where preParse blanked a
+ * line-leading attribute dot. Written by preParse, read by
+ * cangjieCalleeName during the extraction of the SAME file — the extractor
+ * runs preParse → parse → walk synchronously per file, so this module-level
+ * channel never interleaves across files.
+ */
+let blankedDotOffsets = new Set<number>();
+
+/** Leftmost name leaf of a postfix chain (its receiver root). */
+function chainRoot(expr: SyntaxNode): SyntaxNode | null {
+  let n: SyntaxNode | null = expr;
+  for (let depth = 0; n && depth < 32; depth++) {
+    if (n.type === 'postfixExpression' || n.type === 'atomicVariable') {
+      n = n.namedChildren.find((c) => c !== null) ?? null;
+      continue;
+    }
+    return n;
+  }
+  return null;
+}
+
+/**
+ * True when a chained `.attr(...)` hangs off a UI-DSL component expression —
+ * the chain's root is a CAPITALIZED bare component call/trailing-lambda
+ * (`Text("x").fontSize(16)`, `Column { … }.width(100)`), or the root call was
+ * itself a preParse-blanked leading-dot attribute (`.padding(1).opacity(2)`).
+ * Lowercase fluent chains (`list.map { … }.filter { … }`,
+ * `makeBuilder().withX()`) stay ungated and resolve as ordinary calls.
+ */
+function isAttributeChainReceiver(beforeField: SyntaxNode): boolean {
+  if (beforeField.type !== 'postfixExpression') return false;
+  const kids = beforeField.namedChildren.filter((c) => c !== null);
+  const last = kids[kids.length - 1];
+  if (!last || (last.type !== 'callSuffix' && last.type !== 'trailingLambdaExpression')) {
+    return false;
+  }
+  const root = chainRoot(beforeField);
+  if (!root) return false;
+  if (blankedDotOffsets.has(root.startIndex - 1)) return true;
+  const first = root.text.charAt(0);
+  return first >= 'A' && first <= 'Z';
+}
+
+/**
  * Static callee name of a Cangjie call site, given the expression the call
  * suffix applies to (the named sibling immediately preceding the `callSuffix`
  * or `trailingLambdaExpression` inside the parent `postfixExpression`).
@@ -53,7 +97,11 @@ export function cangjieCalleeName(expr: SyntaxNode | null, source: string): stri
       case 'identifier':
       case 'scoped_identifier': {
         const text = getNodeText(expr, source).trim();
-        return text || undefined;
+        if (!text) return undefined;
+        // A callee sitting where preParse blanked a line-leading attribute
+        // dot IS a chained UI attribute: emit it dot-prefixed so resolution
+        // only ever links it to a decorator-marked attribute helper.
+        return blankedDotOffsets.has(expr.startIndex - 1) ? `.${text}` : text;
       }
       case 'atomicVariable':
       case 'fieldAccess':
@@ -65,6 +113,13 @@ export function cangjieCalleeName(expr: SyntaxNode | null, source: string): stri
         const last = children[children.length - 1] ?? null;
         if (!last) return undefined;
         if (last.type === 'fieldAccess') {
+          // `.attr` chained onto a component expression is a UI attribute,
+          // not a method call — emit dot-prefixed (hard-gated in resolution).
+          const receiver = children.length >= 2 ? children[children.length - 2]! : null;
+          if (receiver && isAttributeChainReceiver(receiver)) {
+            const name = cangjieCalleeName(last, source);
+            return name ? `.${name}` : undefined;
+          }
           expr = last;
           continue;
         }
@@ -164,15 +219,19 @@ export const cangjieExtractor: LanguageExtractor = {
   //    grammar requires an accessor block. Blank the whole declaration; the
   //    implementing classes carry the real accessors.
   preParse: (source) => {
+    blankedDotOffsets = new Set();
     if (!source.includes('.') && !source.includes('prop')) return source;
     const lines = source.split('\n');
     let changed = false;
+    let offset = 0;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
       const dot = line.match(/^(\s*)\.[A-Za-z_]/);
       if (dot) {
+        blankedDotOffsets.add(offset + dot[1]!.length);
         lines[i] = dot[1] + ' ' + line.slice(dot[1]!.length + 1);
         changed = true;
+        offset += line.length + 1;
         continue;
       }
       const prop = line.match(/^(\s*)((?:(?:public|private|protected|internal|static|mut|open|override)\s+)*prop\s+[A-Za-z_]\w*\s*:[^{]*)$/);
@@ -180,6 +239,7 @@ export const cangjieExtractor: LanguageExtractor = {
         lines[i] = prop[1] + ' '.repeat(prop[2]!.length);
         changed = true;
       }
+      offset += line.length + 1;
     }
     return changed ? lines.join('\n') : source;
   },

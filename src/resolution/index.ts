@@ -750,7 +750,7 @@ export class ReferenceResolver {
     // Nix static path imports (`import ./x.nix`) name a FILE, not a symbol —
     // they bypass the symbol-existence check and resolve via resolveViaImport.
     const existenceName =
-      ref.language === 'arkts' && ref.referenceName.startsWith('.')
+      (ref.language === 'arkts' || ref.language === 'cangjie') && ref.referenceName.startsWith('.')
         ? ref.referenceName.slice(1)
         : ref.referenceName;
     if (

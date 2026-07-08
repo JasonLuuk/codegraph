@@ -147,11 +147,11 @@ export function getPrecedingDocstring(node: SyntaxNode, source: string): string 
       // children the wrapper climb above could handle) — skip them without
       // collecting so the comment above the annotation block is reached.
       sibling = sibling.previousNamedSibling;
-    } else if (sibling.type === 'packageDeclaration') {
-      // Cangjie: a comment directly following `package x` is absorbed as the
-      // packageDeclaration's TRAILING children — it documents the first
-      // declaration after the package header (only reachable when everything
-      // in between was annotations/comments), so surface it here.
+    } else if (sibling.type === 'packageDeclaration' || sibling.type === 'importList') {
+      // Cangjie: a comment directly following `package x` OR an import is
+      // absorbed as that node's TRAILING children — it documents the first
+      // declaration after the header (only reachable when everything in
+      // between was annotations/comments), so surface it here.
       const kids = sibling.namedChildren;
       for (let i = kids.length - 1; i >= 0; i--) {
         const kid = kids[i];

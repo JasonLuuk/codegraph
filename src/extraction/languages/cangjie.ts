@@ -568,22 +568,28 @@ export const cangjieExtractor: LanguageExtractor = {
   // edges exist; symbol resolution itself is package-global in Cangjie, which
   // the name-matcher's exact-name strategy already covers.
   extractImport: (node, source) => {
-    const text = getNodeText(node, source).trim();
-    const m = text.match(/^import\s+(.+)$/s);
+    // The grammar absorbs a comment FOLLOWING the import into the import
+    // node (`import ohos.resource.*` newline `/** … */` — the node text
+    // carried the whole comment). Only the first line is the import; strip
+    // any trailing comment start from it too.
+    const firstLine = (getNodeText(node, source).trim().split('\n')[0] ?? '')
+      .replace(/\/\/.*$/, '')
+      .replace(/\/\*.*$/, '')
+      .trim();
+    const m = firstLine.match(/^import\s+(.+)$/);
     if (!m || !m[1]) return null;
     const spec = m[1].trim();
     // Strip an alias (`import a.b as c`), then reduce to the PACKAGE path:
-    // `pkg.{A, B}` / `pkg.*` drop the member group/wildcard; `pkg.Member`
-    // drops the final segment (Cangjie imports always name a member).
+    // `pkg.{A, B}` drops the member group; `pkg.Member` drops the final
+    // segment (Cangjie imports always name a member); a wildcard import
+    // keeps its `.*` (it IS the package path, spelled as in source).
     let moduleName = spec.replace(/\s+as\s+\w+$/, '');
     if (/\.\{[^}]*\}$/.test(moduleName)) {
       moduleName = moduleName.replace(/\.\{[^}]*\}$/, '');
-    } else if (moduleName.endsWith('.*')) {
-      moduleName = moduleName.slice(0, -2);
-    } else if (moduleName.includes('.')) {
+    } else if (!moduleName.endsWith('.*') && moduleName.includes('.')) {
       moduleName = moduleName.slice(0, moduleName.lastIndexOf('.'));
     }
     if (!moduleName) return null;
-    return { moduleName, signature: text.split('\n')[0] ?? text };
+    return { moduleName, signature: firstLine };
   },
 };

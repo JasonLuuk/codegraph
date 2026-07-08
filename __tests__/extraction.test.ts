@@ -10773,7 +10773,7 @@ import ohos.base.AppLog
 `;
       const result = extractFromSource('imports.cj', code);
       const names = result.nodes.filter((n) => n.kind === 'import').map((n) => n.name);
-      expect(names).toContain('std.collection');
+      expect(names).toContain('std.collection.*');
       expect(names).toContain('ohos.base');
     });
   });
@@ -11273,7 +11273,7 @@ func f(): Unit {}
 `;
     const result = extractFromSource('imp.cj', code);
     const names = result.nodes.filter((n) => n.kind === 'import').map((n) => n.name);
-    expect(names).toContain('redis.client.api');
+    expect(names).toContain('redis.client.api.*');
     expect(names).toContain('time');
     expect(result.nodes.find((n) => n.name === 'f')?.kind).toBe('function');
   });
@@ -11381,5 +11381,26 @@ class VM {
       .map((r) => r.referenceName);
     expect(refs).toContain('HourlyTempModel');
     expect(refs).toContain('PlaceInfoModel');
+  });
+});
+
+describe('Cangjie wildcard import followed by a comment', () => {
+  it('should not swallow the following comment into the import name', () => {
+    const code = `package demo
+
+import ohos.resource.*
+
+/** 天气图标映射（WeatherCode → drawable）。
+ * 多行中文注释。
+ */
+public func iconOf(code: Int64): Int64 { return code }
+`;
+    const result = extractFromSource('icons.cj', code);
+    const imports = result.nodes.filter((n) => n.kind === 'import');
+    expect(imports.map((n) => n.name)).toEqual(['ohos.resource.*']);
+    expect(imports[0]!.name).not.toContain('\n');
+    expect(imports[0]!.signature).toBe('import ohos.resource.*');
+    // The comment still belongs to the function that follows it.
+    expect(result.nodes.find((n) => n.name === 'iconOf')?.docstring).toContain('天气图标映射');
   });
 });

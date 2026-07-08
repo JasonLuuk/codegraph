@@ -11334,3 +11334,52 @@ struct H {
     }
   });
 });
+
+describe('Cangjie consecutive same-line annotated fields', () => {
+  it('should keep the class body intact across consecutive @Prop-style fields', () => {
+    const code = `package demo
+
+class WeatherCard {
+    @Prop var title: String = "t"
+    @Prop var degree: String = "26"
+    @Publish public var wind: String = "11 km/h"
+
+    func build(): Unit {
+        render()
+    }
+}
+`;
+    const result = extractFromSource('card.cj', code);
+    const cls = result.nodes.find((n) => n.name === 'WeatherCard');
+    // The grammar ERRORs on the SECOND same-line annotated field and used to
+    // truncate the class at it — everything after fell out of the class.
+    expect(cls?.endLine).toBe(11);
+    const fields = result.nodes.filter((n) => n.kind === 'field');
+    expect(fields.map((f) => f.name)).toEqual(['title', 'degree', 'wind']);
+    expect(fields[0]?.decorators).toEqual(['Prop']);
+    expect(fields[2]?.decorators).toEqual(['Publish']);
+    const build = result.nodes.find((n) => n.name === 'build');
+    expect(build?.kind).toBe('method');
+    expect(build?.qualifiedName).toBe('WeatherCard::build');
+    const call = result.unresolvedReferences.find(
+      (r) => r.referenceKind === 'calls' && r.referenceName === 'render'
+    );
+    expect(call?.fromNodeId).toBe(build?.id);
+  });
+
+  it('should emit type references for generic type arguments of field types', () => {
+    const code = `package demo
+
+class VM {
+    @Publish public var hourly: Array<HourlyTempModel> = []
+    @Publish public var place: PlaceInfoModel = PlaceInfoModel()
+}
+`;
+    const result = extractFromSource('vm.cj', code);
+    const refs = result.unresolvedReferences
+      .filter((r) => r.referenceKind === 'references')
+      .map((r) => r.referenceName);
+    expect(refs).toContain('HourlyTempModel');
+    expect(refs).toContain('PlaceInfoModel');
+  });
+});

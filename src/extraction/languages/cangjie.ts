@@ -36,6 +36,17 @@ function directChildOf(node: SyntaxNode, types: readonly string[]): SyntaxNode |
  */
 let blankedDotOffsets = new Set<number>();
 
+/**
+ * 1-based line → macro-annotation names that preParse blanked off that line.
+ * The grammar cannot parse TWO consecutive same-line annotated members
+ * (`@Publish var a = 1` newline `@Publish var b = 2` — the second one ERRORs
+ * and truncates the class body), while the plain members parse perfectly.
+ * preParse blanks the same-line annotation tokens and records them here;
+ * collectMacroAnnotations merges them back onto the declaration's node.
+ * Same synchronous per-file lifecycle as blankedDotOffsets above.
+ */
+let sameLineAnnotations = new Map<number, string[]>();
+
 /** Leftmost name leaf of a postfix chain (its receiver root). */
 function chainRoot(expr: SyntaxNode): SyntaxNode | null {
   let n: SyntaxNode | null = expr;
@@ -175,6 +186,9 @@ function collectMacroAnnotations(node: SyntaxNode): string[] | undefined {
     const name = directChild(sib, 'macroName');
     if (name) names.unshift(name.text);
   }
+  // Same-line annotations preParse blanked off this declaration's line.
+  const inline = sameLineAnnotations.get(node.startPosition.row + 1);
+  if (inline) names.unshift(...inline);
   return names.length > 0 ? names : undefined;
 }
 
@@ -241,15 +255,31 @@ function blankSupertypeGenerics(line: string, start: number): string {
  * are keyword-typed nodes, not userType, and return undefined — matching how
  * other languages skip primitive type refs.
  */
-function fieldTypeName(node: SyntaxNode): string | undefined {
-  // `?Config` wraps the userType in a prefixType node.
-  const typeNode = directChildOf(node, ['userType', 'prefixType']);
-  if (!typeNode) return undefined;
-  const inner = typeNode.type === 'prefixType'
-    ? directChild(typeNode, 'userType') ?? typeNode
-    : typeNode;
-  const id = directChild(inner, 'identifier');
-  return id ? id.text : undefined;
+function fieldTypeNames(node: SyntaxNode): string[] {
+  // The declared type child (`?Config` wraps in prefixType; `Array<T>` is
+  // arrayType). Collect the head identifier AND every user type named in the
+  // generic arguments — `hourlyForecast: Array<HourlyTempModel>` references
+  // HourlyTempModel (builtin scalar types are keyword-typed nodes, never
+  // userType, so they never appear here).
+  const typeNode = directChildOf(node, ['userType', 'prefixType', 'arrayType', 'tupleType', 'arrowType']);
+  if (!typeNode) return [];
+  const names: string[] = [];
+  const stack: SyntaxNode[] = [typeNode];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    if (cur.type === 'userType') {
+      const id = directChild(cur, 'identifier');
+      if (id && !names.includes(id.text)) names.push(id.text);
+    }
+    if (cur.type === 'arrayType' && cur.parent === node) {
+      // `Array<...>` — the head Array itself is a builtin container; only
+      // its arguments matter. (userType heads like Option<T> keep the head.)
+    }
+    for (const child of cur.namedChildren) {
+      if (child) stack.push(child);
+    }
+  }
+  return names;
 }
 
 export const cangjieExtractor: LanguageExtractor = {
@@ -274,6 +304,7 @@ export const cangjieExtractor: LanguageExtractor = {
   //    implementing classes carry the real accessors.
   preParse: (source) => {
     blankedDotOffsets = new Set();
+    sameLineAnnotations = new Map();
     const lines = source.split('\n');
     let changed = false;
     let offset = 0;
@@ -311,6 +342,17 @@ export const cangjieExtractor: LanguageExtractor = {
       // interpolation. The content is irrelevant to extraction — blank it.
       if (line.includes('"$"')) {
         line = lines[i] = line.replace(/"\$"/g, '" "');
+        changed = true;
+      }
+      // Same-line annotated member (`@Publish public var x = 1`): blank the
+      // annotation tokens so the member parses as a plain declaration (two
+      // consecutive same-line annotated members otherwise ERROR and truncate
+      // the class body), and record the names for collectMacroAnnotations.
+      const inlineAnno = line.match(/^(\s*)((?:@[A-Za-z_][\w.]*(?:\[[^\]]*\])?\s+)+)(?=(?:public|private|protected|internal|static|open|override|mut|unsafe|foreign|const|let|var|func|prop)\b)/);
+      if (inlineAnno) {
+        const names = [...inlineAnno[2]!.matchAll(/@([A-Za-z_][\w.]*)/g)].map((m) => m[1]!);
+        sameLineAnnotations.set(i + 1, names);
+        line = lines[i] = inlineAnno[1] + ' '.repeat(inlineAnno[2]!.length) + line.slice(inlineAnno[1]!.length + inlineAnno[2]!.length);
         changed = true;
       }
       const dot = line.match(/^(\s*)\.[A-Za-z_]/);
@@ -423,8 +465,7 @@ export const cangjieExtractor: LanguageExtractor = {
       if (!nameNode) return false;
       const prop = ctx.createNode('property', getNodeText(nameNode, ctx.source), node);
       if (prop) {
-        const declaredType = fieldTypeName(node);
-        if (declaredType) {
+        for (const declaredType of fieldTypeNames(node)) {
           ctx.addUnresolvedReference({
             fromNodeId: prop.id,
             referenceName: declaredType,
@@ -466,8 +507,7 @@ export const cangjieExtractor: LanguageExtractor = {
         .filter((c) => c?.type === 'variableName')
         .map((c) => ctx.createNode('field', getNodeText(c!, ctx.source), node))
         .filter((f) => f !== null);
-      const declaredType = fieldTypeName(node);
-      if (declaredType) {
+      for (const declaredType of fieldTypeNames(node)) {
         for (const f of fields) {
           ctx.addUnresolvedReference({
             fromNodeId: f!.id,

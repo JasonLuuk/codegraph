@@ -502,7 +502,25 @@ export const cangjieExtractor: LanguageExtractor = {
     if (node.type === 'variableDeclaration') {
       const parentId = ctx.nodeStack[ctx.nodeStack.length - 1];
       const parent = parentId ? ctx.nodes.find((n) => n.id === parentId) : undefined;
-      if (!parent || !CLASS_LIKE_KINDS.has(parent.kind)) return false;
+      if (!parent) return false;
+      // PACKAGE-level let/var: a real symbol — often the app's wiring point
+      // (`let ENTRY_STAGE_REGISTER_RESULT = AbilityStage.registerCreator(
+      // "entry", {=> MyAbilityStage()})` IS the entry→AbilityStage link), so
+      // it must exist as a node the initializer's calls attribute to.
+      // `let _ = …` keeps its calls on the file (no symbol to name).
+      if (parent.kind === 'file') {
+        const isLet = node.children.some((c) => c?.type === 'let');
+        const tops = node.namedChildren
+          .filter((c) => c?.type === 'variableName' && getNodeText(c!, ctx.source) !== '_')
+          .map((c) => ctx.createNode(isLet ? 'constant' : 'variable', getNodeText(c!, ctx.source), node))
+          .filter((v) => v !== null);
+        const topScope = tops.length === 1 ? tops[0]!.id : undefined;
+        if (topScope) ctx.pushScope(topScope);
+        ctx.visitFunctionBody(node, topScope ?? '');
+        if (topScope) ctx.popScope();
+        return true;
+      }
+      if (!CLASS_LIKE_KINDS.has(parent.kind)) return false;
       const fields = node.namedChildren
         .filter((c) => c?.type === 'variableName')
         .map((c) => ctx.createNode('field', getNodeText(c!, ctx.source), node))

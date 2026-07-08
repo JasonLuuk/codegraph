@@ -11404,3 +11404,27 @@ public func iconOf(code: Int64): Int64 { return code }
     expect(result.nodes.find((n) => n.name === 'iconOf')?.docstring).toContain('天气图标映射');
   });
 });
+
+describe('Cangjie top-level bindings', () => {
+  it('should extract package-level let/var and attribute registration calls to them', () => {
+    const code = `package demo
+
+import kit.AbilityKit.AbilityStage
+
+let ENTRY_STAGE_REGISTER_RESULT = AbilityStage.registerCreator("entry", {=> MyAbilityStage()})
+var mutableCounter = 0
+`;
+    const result = extractFromSource('entry.cj', code);
+    const reg = result.nodes.find((n) => n.name === 'ENTRY_STAGE_REGISTER_RESULT');
+    expect(reg?.kind).toBe('constant');
+    expect(result.nodes.find((n) => n.name === 'mutableCounter')?.kind).toBe('variable');
+    // The registration's construction call belongs to the binding, giving the
+    // entry→AbilityStage hop a queryable symbol owner.
+    const inst = result.unresolvedReferences.find(
+      (r) => r.referenceKind === 'calls' && r.referenceName === 'MyAbilityStage'
+    );
+    expect(inst?.fromNodeId).toBe(reg?.id);
+    // Function-local lets still stay unextracted (pinned elsewhere too).
+    expect(result.nodes.filter((n) => n.kind === 'constant')).toHaveLength(1);
+  });
+});

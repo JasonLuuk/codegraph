@@ -11534,3 +11534,25 @@ func lam(): Unit {
     expect(names).toContain('background');
   });
 });
+
+describe('Cangjie arrow-form trailing lambda in registrations', () => {
+  it('should capture the construction inside {=> X()} arrow lambdas', () => {
+    const code = `package demo
+
+import kit.AbilityKit.AbilityStage
+
+let A = AbilityStage.registerCreator("entry", {=> MyAbilityStage()})
+let B = TestRunner.registerCreator("T") {OpenHarmonyTestRunner()}
+`;
+    const result = extractFromSource('reg.cj', code);
+    expect(result.errors).toHaveLength(0);
+    const calls = result.unresolvedReferences.filter((r) => r.referenceKind === 'calls').map((r) => r.referenceName);
+    // Both lambda spellings — arrow {=> X()} and bare {X()} — must capture
+    // their construction, attributed to the top-level binding.
+    expect(calls).toContain('MyAbilityStage');
+    expect(calls).toContain('OpenHarmonyTestRunner');
+    const byId = Object.fromEntries(result.nodes.map((n) => [n.id, n.name]));
+    const my = result.unresolvedReferences.find((r) => r.referenceName === 'MyAbilityStage');
+    expect(byId[my!.fromNodeId]).toBe('A');
+  });
+});

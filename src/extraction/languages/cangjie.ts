@@ -47,6 +47,14 @@ let blankedDotOffsets = new Set<number>();
  */
 let sameLineAnnotations = new Map<number, string[]>();
 
+/**
+ * 1-based line → the REAL operator symbol preParse substituted away. The
+ * grammar's operator rule has no `()` (the call operator), so
+ * `operator func ()(): T` cannot parse; preParse swaps the symbol for the
+ * same-width `==` and records the truth here for resolveName.
+ */
+let substitutedOperators = new Map<number, string>();
+
 /** Leftmost name leaf of a postfix chain (its receiver root). */
 function chainRoot(expr: SyntaxNode): SyntaxNode | null {
   let n: SyntaxNode | null = expr;
@@ -305,6 +313,7 @@ export const cangjieExtractor: LanguageExtractor = {
   preParse: (source) => {
     blankedDotOffsets = new Set();
     sameLineAnnotations = new Map();
+    substitutedOperators = new Map();
     const lines = source.split('\n');
     let changed = false;
     let offset = 0;
@@ -315,6 +324,59 @@ export const cangjieExtractor: LanguageExtractor = {
       // in place.
       if (line.includes('operator override')) {
         line = lines[i] = line.replace(/operator override/g, 'override operator');
+        changed = true;
+      }
+      // The CALL operator `operator func ()(...)` — no such symbol in the
+      // grammar's operator rule. Substitute the same-width `==` so the member
+      // parses as an operator function, and record the real symbol for
+      // resolveName.
+      const callOp = line.match(/operator\s+func\s+\(\)/);
+      if (callOp) {
+        substitutedOperators.set(i + 1, '()');
+        line = lines[i] = line.replace(/(operator\s+func\s+)\(\)/, '$1==');
+        changed = true;
+      }
+      // Own-line annotation with an argument list the grammar can't parse
+      // (`@Subscriber[threadmode: MAIN, sticky: true]`, `@Entity[tableName =
+      // "x"]`) — blank the bracket part; the name is what decorators keep.
+      const annoArgs = line.match(/^(\s*@[A-Za-z_][\w.]*)(\[[^\]]*\])(\s*)$/);
+      if (annoArgs) {
+        line = lines[i] = annoArgs[1] + ' '.repeat(annoArgs[2]!.length) + annoArgs[3];
+        changed = true;
+      }
+      // A continuation line STARTING with a binary `+` (multi-line arithmetic
+      // — `+ this.mLegend.getXOffset()`) has no grammar rule; blank the
+      // operator so the operand parses as its own expression statement (its
+      // calls still extract, attributed to the same enclosing member).
+      const plusCont = line.match(/^(\s*)\+\s/);
+      if (plusCont) {
+        line = lines[i] = plusCont[1] + ' ' + line.slice(plusCont[1]!.length + 1);
+        changed = true;
+      }
+      // A continuation line starting with `=` (an initializer wrapped onto
+      // its own line under a typed declaration). A bare expression statement
+      // is not a legal class-body member, so the whole line is blanked —
+      // losing that one initializer call but keeping the class parseable
+      // (the typed declaration above it extracts as a normal field).
+      const eqCont = line.match(/^(\s*)=(?![=>])/);
+      if (eqCont) {
+        line = lines[i] = ' '.repeat(line.length);
+        changed = true;
+      }
+      // A rune literal holding a dollar (`case '$' | …`) breaks the lexer
+      // like the string forms above.
+      if (line.includes("'$'")) {
+        line = lines[i] = line.replace(/'\$'/g, "' '");
+        changed = true;
+      }
+      // `$` immediately before `)` only occurs inside string content (regex
+      // patterns — `(?:\\s|>|$)`); the lexer treats it as a broken
+      // interpolation. Content is irrelevant to extraction — blank it.
+      if (line.includes('$)') || /\$"/.test(line)) {
+        // `$"` (a regex end-anchor closing the string) breaks the lexer the
+        // same way — but `"$"` (lone-dollar literal) is handled above and
+        // legitimate interpolation is `${` or `$identifier`, never `$"`.
+        line = lines[i] = line.replace(/\$\)/g, ' )').replace(/\$(?=")/g, ' ');
         changed = true;
       }
       // `from module import pkg.path.*` — cross-module import syntax the
@@ -444,6 +506,8 @@ export const cangjieExtractor: LanguageExtractor = {
       return getNodeText(extendType, source).replace(/<[\s\S]*$/, '').trim() || undefined;
     }
     if (node.type === 'operatorFunctionDefinition') {
+      const substituted = substitutedOperators.get(node.startPosition.row + 1);
+      if (substituted) return `operator ${substituted}`;
       const op = directChild(node, 'operator');
       return op ? `operator ${getNodeText(op, source)}` : 'operator';
     }

@@ -11428,3 +11428,109 @@ var mutableCounter = 0
     expect(result.nodes.filter((n) => n.kind === 'constant')).toHaveLength(1);
   });
 });
+
+describe('Cangjie corpus-round grammar gaps (pre-parse)', () => {
+  it('should extract the call operator with its real name', () => {
+    const code = `package demo
+
+class Getter<T> {
+    public operator func ()(): T {
+        return this.getOrThrow()
+    }
+    func after(): Unit {}
+}
+`;
+    const result = extractFromSource('g.cj', code);
+    const op = result.nodes.find((n) => n.name === 'operator ()');
+    expect(op?.kind).toBe('method');
+    expect(result.nodes.find((n) => n.name === 'after')?.kind).toBe('method');
+    const call = result.unresolvedReferences.find(
+      (r) => r.referenceKind === 'calls' && r.referenceName === 'getOrThrow'
+    );
+    expect(call?.fromNodeId).toBe(op?.id);
+  });
+
+  it('should survive annotation argument lists the grammar cannot parse', () => {
+    const code = `package demo
+
+class Bus {
+    @Subscriber[threadmode: MAIN, sticky: true, priority: 0]
+    func onEvent(e: Event): Unit { handle(e) }
+}
+
+@Entity[tableName = "animals"]
+class Animal {
+    func speak(): Unit {}
+}
+`;
+    const result = extractFromSource('bus.cj', code);
+    const onEvent = result.nodes.find((n) => n.name === 'onEvent');
+    expect(onEvent?.kind).toBe('method');
+    expect(onEvent?.decorators).toEqual(['Subscriber']);
+    expect(result.nodes.find((n) => n.name === 'Animal')?.decorators).toEqual(['Entity']);
+    expect(result.nodes.find((n) => n.name === 'speak')?.kind).toBe('method');
+  });
+
+  it('should survive line-leading + continuations and keep their calls', () => {
+    const code = `package demo
+
+class Chart {
+    func offset(): Float64 {
+        return this.base()
+                    + this.mLegend.getXOffset()
+                    + this.mLegend.getYOffset()
+    }
+    func after(): Unit {}
+}
+`;
+    const result = extractFromSource('chart.cj', code);
+    expect(result.nodes.find((n) => n.name === 'after')?.kind).toBe('method');
+    const names = result.unresolvedReferences
+      .filter((r) => r.referenceKind === 'calls')
+      .map((r) => r.referenceName);
+    expect(names).toContain('getXOffset');
+    expect(names).toContain('getYOffset');
+  });
+
+  it('should survive regex-anchor dollars in strings and rune literals', () => {
+    const code = `package demo
+
+func patterns(c: Rune): Bool {
+    let re = Regex("^<(?:script|pre|style)(?:\\\\s|>|$)", IgnoreCase)
+    let re2 = Regex("^abc\\\\s*$")
+    match (c) {
+        case '!' | '$' | '%' => return true
+        case _ => return false
+    }
+}
+func after(): Unit { work() }
+`;
+    const result = extractFromSource('rx.cj', code);
+    expect(result.nodes.find((n) => n.name === 'patterns')?.kind).toBe('function');
+    expect(result.nodes.find((n) => n.name === 'after')?.kind).toBe('function');
+  });
+
+  it('should keep the class parseable when an initializer wraps to a leading-= line', () => {
+    const code = `package demo
+
+class Loaders {
+    protected static let FAILING: TemplateLoader
+                            = DefenseTemplateLoader()
+    func m(): Unit { work() }
+}
+
+func lam(): Unit {
+    spawn {
+        =>
+        background()
+    }
+}
+`;
+    const result = extractFromSource('ld.cj', code);
+    expect(result.nodes.find((n) => n.name === 'FAILING')?.kind).toBe('field');
+    expect(result.nodes.find((n) => n.name === 'm')?.kind).toBe('method');
+    // Line-leading `=>` lambda arrows must NOT be blanked.
+    const names = result.unresolvedReferences.filter((r) => r.referenceKind === 'calls').map((r) => r.referenceName);
+    expect(names).toContain('background');
+  });
+});

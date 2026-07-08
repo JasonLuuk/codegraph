@@ -271,3 +271,41 @@ describe('Cangjie external supertype records', () => {
     expect(cg.getPendingReferenceCount()).toBe(0);
   });
 });
+
+describe('Cangjie entry-registration files vs .gitignore', () => {
+  let tmpDir: string | undefined;
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = undefined;
+  });
+
+  it('indexes hvigor-generated entry registrations even when gitignored', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-cangjie-entryreg-'));
+    // HarmonyOS templates gitignore the generated registration files.
+    fs.writeFileSync(
+      path.join(tmpDir, '.gitignore'),
+      '**/ability_mainability_entry.cj\n**/module_**_entry.cj\n'
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, 'ability_stage.cj'),
+      'package demo\n\nclass MyAbilityStage <: AbilityStage {}\n'
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, 'module_entry_entry.cj'),
+      'package demo\n\nimport kit.AbilityKit.AbilityStage\n\n' +
+        'let ENTRY_STAGE_REGISTER_RESULT = AbilityStage.registerCreator("entry", {=> MyAbilityStage()})\n'
+    );
+
+    const cg = CodeGraph.initSync(tmpDir);
+    await cg.indexAll();
+
+    // The registration binding exists as a symbol, and the entry hop links.
+    const reg = cg.getNodesByKind('constant').find((n) => n.name === 'ENTRY_STAGE_REGISTER_RESULT');
+    expect(reg).toBeDefined();
+    const stage = cg.getNodesByKind('class').find((n) => n.name === 'MyAbilityStage');
+    expect(stage).toBeDefined();
+    expect(
+      cg.getIncomingEdges(stage!.id).some((e) => e.kind === 'instantiates' && e.source === reg!.id)
+    ).toBe(true);
+  });
+});

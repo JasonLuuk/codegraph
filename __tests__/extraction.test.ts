@@ -11304,3 +11304,33 @@ func after(): Unit { work() }
     expect(result.nodes.find((n) => n.name === 'after')?.kind).toBe('function');
   });
 });
+
+describe('ArkTS broken-chain attribute gating', () => {
+  it('should dot-gate attributes split from their chain by comments or multi-line object args', () => {
+    const code = `@Component
+struct H {
+  build() {
+    Button('x')
+      .height(50)
+      .linearGradient({
+        angle: 90,
+        colors: [[0x4A6CF7, 0.0], [0x4E54C8, 1.0]]
+      })
+      .fontColor(Color.White)
+    Text('y')
+      .fontColor('#666')
+      // note between attributes
+      .fontSize(16)
+  }
+}
+`;
+    const result = extractFromSource('pages/H.ets', code);
+    const calls = result.unresolvedReferences.filter((r) => r.referenceKind === 'calls');
+    // Every framework attribute must be dot-prefixed — a bare name would let
+    // bare-name matching link it to an arbitrary same-named symbol.
+    for (const attr of ['fontColor', 'fontSize', 'height', 'linearGradient']) {
+      expect(calls.some((r) => r.referenceName === attr)).toBe(false);
+      expect(calls.some((r) => r.referenceName === `.${attr}`)).toBe(true);
+    }
+  });
+});

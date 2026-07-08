@@ -839,6 +839,33 @@ export class ReferenceResolver {
         : null;
     }
 
+    // A name explicitly bound by an import from an OUT-OF-REPO module can
+    // never be a repo symbol — letting it fall through to name matching
+    // manufactures cross-app edges (the system `AlertDialog` imported from
+    // '@kit.ArkUI' fuzzy-matched onto an unrelated `alertDialog` method in
+    // another app of a monorepo). Import-based resolution (strategy 2) has
+    // already had its chance; stop here instead of guessing.
+    const dottedHead = ref.referenceName.split('.')[0]!;
+    if (dottedHead) {
+      const boundExternal = this.context
+        .getImportMappings(ref.filePath, ref.language)
+        .some(
+          (imp) =>
+            !imp.resolvedPath &&
+            // HarmonyOS SYSTEM namespaces only ('@kit.ArkUI', '@ohos.router')
+            // — dot-separated, so unambiguous against workspace/npm scoped
+            // packages ('@scope/name'), which stay eligible for the ohpm
+            // workspace and name-matching strategies.
+            /^@(?:kit|ohos|system|hms|arkts)\./.test(imp.source) &&
+            (imp.localName === dottedHead || imp.localName === ref.referenceName)
+        );
+      if (boundExternal) {
+        return candidates.length > 0
+          ? candidates.reduce((best, curr) => (curr.confidence > best.confidence ? curr : best))
+          : null;
+      }
+    }
+
     // Strategy 3: Try name matching
     let nameResult = this.gateLanguage(matchReference(ref, this.context), ref);
     // Nix has no ambient cross-file namespace — a callee binds lexically

@@ -232,3 +232,42 @@ describe('Cangjie bridge freshness on sync', () => {
     expect(bridge()).toHaveLength(1);
   });
 });
+
+describe('Cangjie external supertype records', () => {
+  let tmpDir: string | undefined;
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = undefined;
+  });
+
+  it('parks unresolvable supertypes in unresolved_refs and keeps in-repo ones as edges', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-cangjie-super-'));
+    fs.writeFileSync(
+      path.join(tmpDir, 'abilities.cj'),
+      'package demo\n\n' +
+        'open class BaseView {}\n\n' +
+        'class HomeView <: BaseView {}\n\n' +   // in-repo supertype → edge
+        'class MainAbility <: UIAbility {\n' +   // SDK supertype → parked record
+        '    public init() { super() }\n' +
+        '}\n'
+    );
+    const cg = CodeGraph.initSync(tmpDir);
+    await cg.indexAll();
+
+    // In-repo supertype resolves into a real extends edge.
+    const base = cg.getNodesByKind('class').find((n) => n.name === 'BaseView');
+    expect(cg.getIncomingEdges(base!.id).filter((e) => e.kind === 'extends')).toHaveLength(1);
+
+    // The SDK supertype is parked as a record, and does NOT read as pending
+    // work (the orphan sweep / status must not see an interrupted index).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { DatabaseSync } = require('node:sqlite');
+    const db = new DatabaseSync(path.join(tmpDir, '.codegraph/codegraph.db'));
+    const rows = db
+      .prepare("SELECT reference_kind, reference_name FROM unresolved_refs")
+      .all() as Array<{ reference_kind: string; reference_name: string }>;
+    db.close();
+    expect(rows).toEqual([{ reference_kind: 'extends', reference_name: 'UIAbility' }]);
+    expect(cg.getPendingReferenceCount()).toBe(0);
+  });
+});

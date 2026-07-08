@@ -1002,9 +1002,19 @@ export class ReferenceResolver {
     // pass the table must hold nothing that pass processed, so that any row
     // still present belongs to an interrupted run and the sweep can key off
     // a bare row count.
-    if (result.unresolved.length > 0) {
+    // EXCEPT hierarchy refs (extends/implements): an unresolvable supertype
+    // is a real fact about the class — usually an out-of-repo SDK type
+    // (`class MainAbility <: UIAbility`) — and deleting it erased the only
+    // record of the inheritance. They stay parked in unresolved_refs (the
+    // pending-count query exempts them so the sweep and `status` never read
+    // them as an interrupted run) and resolve into edges if the supertype
+    // ever enters the repo.
+    const droppable = result.unresolved.filter(
+      (r) => r.referenceKind !== 'extends' && r.referenceKind !== 'implements'
+    );
+    if (droppable.length > 0) {
       this.queries.deleteSpecificResolvedReferences(
-        result.unresolved.map((r) => ({
+        droppable.map((r) => ({
           fromNodeId: r.fromNodeId,
           referenceName: r.referenceName,
           referenceKind: r.referenceKind,
@@ -1190,9 +1200,14 @@ export class ReferenceResolver {
       }
 
       // Delete unresolvable refs from this batch to avoid re-processing them
-      if (result.unresolved.length > 0) {
+      // — except hierarchy refs, parked as a record of out-of-repo
+      // supertypes (see resolveAndPersist).
+      const droppableBatch = result.unresolved.filter(
+        (r) => r.referenceKind !== 'extends' && r.referenceKind !== 'implements'
+      );
+      if (droppableBatch.length > 0) {
         this.queries.deleteSpecificResolvedReferences(
-          result.unresolved.map((r) => ({
+          droppableBatch.map((r) => ({
             fromNodeId: r.fromNodeId,
             referenceName: r.referenceName,
             referenceKind: r.referenceKind,
